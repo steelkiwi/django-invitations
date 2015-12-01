@@ -9,11 +9,9 @@ from django.contrib.sites.models import Site
 from django.core.urlresolvers import reverse
 from django.conf import settings
 
-from allauth.account.adapter import DefaultAccountAdapter
-from allauth.account.adapter import get_adapter
-
 from .managers import InvitationManager
 from .app_settings import app_settings
+from .adapters import get_invitations_adapter
 from . import signals
 
 
@@ -63,7 +61,7 @@ class Invitation(models.Model):
 
         email_template = 'invitations/email/email_invite'
 
-        get_adapter().send_mail(
+        get_invitations_adapter().send_mail(
             email_template,
             self.email,
             ctx)
@@ -80,15 +78,21 @@ class Invitation(models.Model):
         return "Invite: {0}".format(self.email)
 
 
-class InvitationsAdapter(DefaultAccountAdapter):
+# here for backwards compatibility, historic allauth adapter
+if hasattr(settings, 'ACCOUNT_ADAPTER'):
 
-    def is_open_for_signup(self, request):
-        if hasattr(request, 'session') and request.session.get(
-                'account_verified_email'):
-            return True
-        elif app_settings.INVITATION_ONLY is True:
-            # Site is ONLY open for invites
-            return False
-        else:
-            # Site is open to signup
-            return True
+    if settings.ACCOUNT_ADAPTER == 'invitations.models.InvitationsAdapter':
+        from allauth.account.adapter import DefaultAccountAdapter
+
+        class InvitationsAdapter(DefaultAccountAdapter):
+
+            def is_open_for_signup(self, request):
+                if hasattr(request, 'session') and request.session.get(
+                        'account_verified_email'):
+                    return True
+                elif app_settings.INVITATION_ONLY is True:
+                    # Site is ONLY open for invites
+                    return False
+                else:
+                    # Site is open to signup
+                    return True

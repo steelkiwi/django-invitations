@@ -11,13 +11,13 @@ from django.core.urlresolvers import reverse
 from django.contrib.auth import get_user_model
 from django.core import mail
 from django.contrib.auth.models import AnonymousUser
+from django.conf import settings
 
-from allauth.account.adapter import get_adapter
-from allauth.account.models import EmailAddress
 from freezegun import freeze_time
 from nose_parameterized import parameterized
 
-from .models import Invitation, InvitationsAdapter
+from .adapters import get_invitations_adapter, BaseInvitationsAdapter
+from .models import Invitation
 from .app_settings import app_settings
 from .views import AcceptInvite, SendJSONInvite
 from .forms import InviteForm
@@ -56,28 +56,31 @@ class InvitationsAdapterTests(TestCase):
 
     @classmethod
     def setUp(cls):
-        cls.adapter = get_adapter()
-        cls.signup_request = RequestFactory().get(reverse(
-            'account_signup', urlconf='allauth.account.urls'))
+        cls.adapter = get_invitations_adapter()
 
     @classmethod
     def tearDownClass(cls):
         del cls.adapter
 
     def test_fetch_adapter(self):
-        self.assertIsInstance(self.adapter, InvitationsAdapter)
-
-    def test_adapter_default_signup(self):
-        self.assertTrue(self.adapter.is_open_for_signup(self.signup_request))
+        if hasattr(settings, 'ACCOUNT_ADAPTER'):
+            from models import InvitationsAdapter
+            self.assertIsInstance(self.adapter, InvitationsAdapter)
+        else:
+            self.assertIsInstance(self.adapter, BaseInvitationsAdapter)
 
     @override_settings(
-        INVITATIONS_INVITATION_ONLY=True
+        INVITATIONS_INVITATION_ONLY=True,
     )
-    def test_adapter_invitations_only(self):
-        self.assertFalse(self.adapter.is_open_for_signup(self.signup_request))
-        response = self.client.get(
-            reverse('account_signup'))
-        self.assertIn('Sign Up Closed', response.content.decode('utf8'))
+    def test_allauth_adapter_invitations_only(self):
+        if hasattr(settings, 'ACCOUNT_ADAPTER'):
+            signup_request = RequestFactory().get(reverse(
+                'account_signup', urlconf='allauth.account.urls'))
+            self.assertFalse(
+                self.adapter.is_open_for_signup(signup_request))
+            response = self.client.get(
+                reverse('account_signup'))
+            self.assertIn('Sign Up Closed', response.content.decode('utf8'))
 
 
 class InvitationsSendViewTests(TestCase):
@@ -102,8 +105,14 @@ class InvitationsSendViewTests(TestCase):
         response = self.client.post(
             reverse('invitations:send-invite'), {'email': 'valid@example.com'},
             follow=True)
-        self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.template_name, ['account/login.html'])
+
+        if hasattr(settings, 'ACCOUNT_ADAPTER'):
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.template_name, ['account/login.html'])
+
+        else:
+            self.assertEqual(response.status_code, 404)
+            self.assertEqual(response.request['PATH_INFO'], '/accounts/login/')
 
     @parameterized.expand([
         ('invalid@example', 'Enter a valid email address'),
@@ -179,7 +188,10 @@ class InvitationsAcceptViewTests(TestCase):
         ('get'),
         ('post'),
     ])
-    def test_accept_invite(self, method):
+    @override_settings(
+        INVITATIONS_SIGNUP_REDIRECT='/non-existent-url/'
+    )
+    def test_accept_invite_vanilla(self, method):
         client_with_method = getattr(self.client, method)
         resp = client_with_method(
             reverse('invitations:accept-invite',
@@ -187,26 +199,47 @@ class InvitationsAcceptViewTests(TestCase):
         invite = Invitation.objects.get(email='email@example.com')
         self.assertTrue(invite.accepted)
         self.assertEqual(invite.inviter, self.user)
-        self.assertEqual(resp.request['PATH_INFO'], reverse('account_signup'))
-
-        form = resp.context_data['form']
-        self.assertEqual('email@example.com', form.fields['email'].initial)
-        messages = resp.context['messages']
-        message_text = [message.message for message in messages]
         self.assertEqual(
-            message_text, [
-                'Invitation to - email@example.com - has been accepted'])
+            resp.request['PATH_INFO'], '/non-existent-url/')
 
-        resp = self.client.post(
-            reverse('account_signup'),
-            {'email': 'email@example.com',
-             'username': 'username',
-             'password1': 'password',
-             'password2': 'password'
-             })
+    @parameterized.expand([
+        ('get'),
+        ('post'),
+    ])
+    def test_accept_invite_allauth(self, method):
+        if hasattr(settings, 'ACCOUNT_ADAPTER'):
+            # allauth specific
+            from allauth.account.models import EmailAddress
 
-        allauth_email_obj = EmailAddress.objects.get(email='email@example.com')
-        self.assertTrue(allauth_email_obj.verified)
+            client_with_method = getattr(self.client, method)
+            resp = client_with_method(
+                reverse('invitations:accept-invite',
+                        kwargs={'key': self.invitation.key}), follow=True)
+            invite = Invitation.objects.get(email='email@example.com')
+            self.assertTrue(invite.accepted)
+            self.assertEqual(invite.inviter, self.user)
+            self.assertEqual(
+                resp.request['PATH_INFO'], reverse('account_signup'))
+
+            form = resp.context_data['form']
+            self.assertEqual('email@example.com', form.fields['email'].initial)
+            messages = resp.context['messages']
+            message_text = [message.message for message in messages]
+            self.assertEqual(
+                message_text, [
+                    'Invitation to - email@example.com - has been accepted'])
+
+            resp = self.client.post(
+                reverse('account_signup'),
+                {'email': 'email@example.com',
+                 'username': 'username',
+                 'password1': 'password',
+                 'password2': 'password'
+                 })
+
+            allauth_email_obj = EmailAddress.objects.get(
+                email='email@example.com')
+            self.assertTrue(allauth_email_obj.verified)
 
     @override_settings(
         INVITATIONS_SIGNUP_REDIRECT='/non-existent-url/'
@@ -245,6 +278,9 @@ class InvitationsSignalTests(TestCase):
 
         invite.delete()
 
+    @override_settings(
+        INVITATIONS_SIGNUP_REDIRECT='/non-existent-url/'
+    )
     @patch('invitations.signals.invite_accepted.send')
     def test_invite_invite_accepted_triggered_correctly(self, mock_signal):
         invite = Invitation.create('email@example.com')
@@ -339,7 +375,8 @@ class InvitationsJSONTests(TestCase):
     def setUp(cls):
         cls.user = get_user_model().objects.create_user(
             username='flibble',
-            password='password')
+            password='password',
+            email='mrflibble@example.com')
         cls.accepted_invite = Invitation.create('already@accepted.com')
         cls.accepted_invite.accepted = True
         cls.accepted_invite.save()
@@ -364,6 +401,10 @@ class InvitationsJSONTests(TestCase):
         (['email3@example.com'],
          {u'valid': [],
           u'invalid': [{u'email3@example.com': u'pending invite'}]},
+         400),
+        (['mrflibble@example.com'],
+         {u'valid': [],
+          u'invalid': [{u'mrflibble@example.com': u'user registered email'}]},
          400),
         (['example@example.com'],
          {u'valid': [{u'example@example.com': u'invited'}],
