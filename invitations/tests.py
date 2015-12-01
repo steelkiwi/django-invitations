@@ -64,7 +64,7 @@ class InvitationsAdapterTests(TestCase):
 
     def test_fetch_adapter(self):
         if hasattr(settings, 'ACCOUNT_ADAPTER'):
-            from models import InvitationsAdapter
+            from .models import InvitationsAdapter
             self.assertIsInstance(self.adapter, InvitationsAdapter)
         else:
             self.assertIsInstance(self.adapter, BaseInvitationsAdapter)
