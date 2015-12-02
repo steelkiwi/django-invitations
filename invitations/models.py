@@ -1,26 +1,25 @@
 import datetime
 
+from allauth.account.adapter import DefaultAccountAdapter
+from allauth.account.adapter import get_adapter
+from django.conf import settings
+from django.contrib.sites.models import Site
+from django.core.urlresolvers import reverse
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.utils.encoding import python_2_unicode_compatible
-from django.contrib.sites.models import Site
-from django.core.urlresolvers import reverse
-from django.conf import settings
+from django.utils.translation import ugettext_lazy as _
 
-from allauth.account.adapter import DefaultAccountAdapter
-from allauth.account.adapter import get_adapter
-
-from .managers import InvitationManager
-from .app_settings import app_settings
 from . import signals
+from .app_settings import app_settings
+from .managers import InvitationManager
 
 
 @python_2_unicode_compatible
 class Invitation(models.Model):
 
-    email = models.EmailField(unique=True, verbose_name=_('e-mail address'))
+    email = models.EmailField(unique=False, verbose_name=_('e-mail address'))
     accepted = models.BooleanField(verbose_name=_('accepted'), default=False)
     created = models.DateTimeField(verbose_name=_('created'),
                                    default=timezone.now)
@@ -77,7 +76,7 @@ class Invitation(models.Model):
             inviter=request.user)
 
     def __str__(self):
-        return "Invite: {0}".format(self.email)
+        return "Invite: {0} by {1}".format(self.email, self.inviter)
 
 
 class InvitationsAdapter(DefaultAccountAdapter):
