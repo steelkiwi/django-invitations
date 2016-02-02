@@ -91,3 +91,11 @@ class InvitationsAdapter(DefaultAccountAdapter):
         else:
             # Site is open to signup
             return True
+
+    def stash_invitation(self, request, invitation_id):
+        request.session['invitation'] = invitation_id
+
+    def unstash_invitation(self, request):
+        ret = request.session.get('invitation')
+        request.session['invitation'] = None
+        return ret
