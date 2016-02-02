@@ -1,24 +1,25 @@
 import datetime
 
+from allauth.account.adapter import DefaultAccountAdapter
+from allauth.account.adapter import get_adapter
+from django.conf import settings
+from django.contrib.sites.models import Site
+from django.core.urlresolvers import reverse
 from django.db import models
-from django.utils.translation import ugettext_lazy as _
 from django.utils import timezone
 from django.utils.crypto import get_random_string
 from django.utils.encoding import python_2_unicode_compatible
-from django.contrib.sites.models import Site
-from django.core.urlresolvers import reverse
-from django.conf import settings
+from django.utils.translation import ugettext_lazy as _
 
-from .managers import InvitationManager
-from .app_settings import app_settings
-from .adapters import get_invitations_adapter
 from . import signals
+from .app_settings import app_settings
+from .managers import InvitationManager
 
 
 @python_2_unicode_compatible
 class Invitation(models.Model):
 
-    email = models.EmailField(unique=True, verbose_name=_('e-mail address'))
+    email = models.EmailField(unique=False, verbose_name=_('e-mail address'))
     accepted = models.BooleanField(verbose_name=_('accepted'), default=False)
     created = models.DateTimeField(verbose_name=_('created'),
                                    default=timezone.now)
@@ -61,7 +62,7 @@ class Invitation(models.Model):
 
         email_template = 'invitations/email/email_invite'
 
-        get_invitations_adapter().send_mail(
+        get_adapter().send_mail(
             email_template,
             self.email,
             ctx)
@@ -75,24 +76,26 @@ class Invitation(models.Model):
             inviter=request.user)
 
     def __str__(self):
-        return "Invite: {0}".format(self.email)
+        return "Invite: {0} by {1}".format(self.email, self.inviter)
 
 
-# here for backwards compatibility, historic allauth adapter
-if hasattr(settings, 'ACCOUNT_ADAPTER'):
+class InvitationsAdapter(DefaultAccountAdapter):
 
-    if settings.ACCOUNT_ADAPTER == 'invitations.models.InvitationsAdapter':
-        from allauth.account.adapter import DefaultAccountAdapter
+    def is_open_for_signup(self, request):
+        if hasattr(request, 'session') and request.session.get(
+                'account_verified_email'):
+            return True
+        elif app_settings.INVITATION_ONLY is True:
+            # Site is ONLY open for invites
+            return False
+        else:
+            # Site is open to signup
+            return True
 
-        class InvitationsAdapter(DefaultAccountAdapter):
+    def stash_invitation(self, request, invitation_id):
+        request.session['invitation'] = invitation_id
 
-            def is_open_for_signup(self, request):
-                if hasattr(request, 'session') and request.session.get(
-                        'account_verified_email'):
-                    return True
-                elif app_settings.INVITATION_ONLY is True:
-                    # Site is ONLY open for invites
-                    return False
-                else:
-                    # Site is open to signup
-                    return True
+    def unstash_invitation(self, request):
+        ret = request.session.get('invitation')
+        request.session['invitation'] = None
+        return ret
