@@ -18,6 +18,11 @@ from .managers import InvitationManager
 
 @python_2_unicode_compatible
 class Invitation(models.Model):
+    DEFAULT, GROUP = range(2)
+    INVITATION_TYPES = (
+        (DEFAULT, _('Default')),
+        (GROUP, _('Group'))
+    )
 
     email = models.EmailField(unique=False, verbose_name=_('e-mail address'))
     accepted = models.BooleanField(verbose_name=_('accepted'), default=False)
@@ -27,6 +32,8 @@ class Invitation(models.Model):
     sent = models.DateTimeField(verbose_name=_('sent'), null=True)
     inviter = models.ForeignKey(
         settings.AUTH_USER_MODEL, null=True, blank=True)
+    invitation_type = models.PositiveSmallIntegerField(choices=INVITATION_TYPES, default=DEFAULT)
+    subject_id = models.IntegerField(blank=True, null=True)
 
     objects = InvitationManager()
 
