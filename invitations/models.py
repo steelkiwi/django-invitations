@@ -38,12 +38,14 @@ class Invitation(models.Model):
     objects = InvitationManager()
 
     @classmethod
-    def create(cls, email, inviter=None):
+    def create(cls, email, inviter=None, **kwargs):
         key = get_random_string(64).lower()
         instance = cls._default_manager.create(
             email=email,
             key=key,
-            inviter=inviter)
+            inviter=inviter,
+            **kwargs
+        )
         return instance
 
     def key_expired(self):
